@@ -5,23 +5,34 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
+	"github.com/containerd/containerd"
 	eventsapi "github.com/containerd/containerd/api/services/events"
 	"github.com/containerd/containerd/api/types/event"
 	"github.com/gogo/protobuf/proto"
 	"github.com/urfave/cli"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 var eventsCommand = cli.Command{
 	Name:  "events",
 	Usage: "display containerd events",
 	Action: func(context *cli.Context) error {
-		eventsClient, err := getEventsService(context)
+		bindAddress := context.GlobalString("address")
+		client, err := containerd.New(bindAddress)
 		if err != nil {
 			return err
 		}
+
 		ctx, cancel := appContext(context)
 		defer cancel()
+
+		eventsClient := client.EventService()
+		if err != nil {
+			return err
+		}
 
 		events, err := eventsClient.Stream(ctx, &eventsapi.StreamEventsRequest{})
 		if err != nil {
@@ -31,6 +42,24 @@ var eventsCommand = cli.Command{
 		for {
 			e, err := events.Recv()
 			if err != nil {
+				fmt.Printf("Recv failed: %s\n", err.Error())
+				if grpc.Code(err) == codes.Unavailable ||
+					// Until grpc v1.5 is released include
+					// https://github.com/grpc/grpc-go/pull/1307
+					// we need to check this too.
+					(grpc.Code(err) == codes.Internal && strings.HasSuffix(err.Error(), "transport is closing")) {
+					fmt.Printf("Retrying\n")
+					for {
+						events, err = eventsClient.Stream(ctx, &eventsapi.StreamEventsRequest{}) //, grpc.FailFast(false))
+						if err == nil {
+							break
+						}
+						fmt.Printf("Retry failed: %s\n", err.Error())
+						time.Sleep(1 * time.Second)
+						//return err
+					}
+					continue
+				}
 				return err
 			}
 
