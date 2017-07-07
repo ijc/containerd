@@ -63,9 +63,6 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if err := setupRoot(); err != nil {
-			return err
-		}
 		path, err := os.Getwd()
 		if err != nil {
 			return err
